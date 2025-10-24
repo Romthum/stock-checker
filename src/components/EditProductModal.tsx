@@ -2,123 +2,138 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
-export type Product = {
-  id: string;
-  name: string;
-  sku?: string | null;
-  cost_price?: number | null;   // ⬅ optional
-  sale_price?: number | null;   // ⬅ optional
-  qty?: number;                 // ⬅ optional
-  category?: string | null;     // ⬅ optional
-  image_url?: string | null;    // ⬅ optional
-};
+export default function EditProductModal({ open, onClose, product, onSaved }: any) {
+  const [form, setForm] = useState(product);
+  const [loading, setLoading] = useState(false);
 
-type Props = {
-  open: boolean;
-  onClose: () => void;
-  product: Partial<Product>;      // ⬅ รับ partial ได้
-  onSaved: () => void;
-};
-
-export default function EditProductModal({ open, onClose, product, onSaved }: Props) {
   if (!open) return null;
 
-  // ใส่ค่าเริ่มต้นกัน undefined
-  const [form, setForm] = useState<Product>({
-    id: product.id!,                          // id ต้องมีเมื่อแก้ไข
-    name: product.name ?? '',
-    sku: product.sku ?? '',
-    cost_price: product.cost_price ?? 0,
-    sale_price: product.sale_price ?? 0,
-    qty: product.qty ?? 0,
-    category: product.category ?? '',
-    image_url: product.image_url ?? '',
-  });
-
   async function save() {
+    setLoading(true);
     const { error } = await supabase
       .from('products')
       .update({
         name: form.name,
-        sku: form.sku || null,
-        cost_price: Number(form.cost_price ?? 0),
-        sale_price: Number(form.sale_price ?? 0),
-        qty: Number(form.qty ?? 0),
-        category: form.category || null,
-        image_url: form.image_url || null,
+        sku: form.sku,
+        cost_price: form.cost_price,
+        sale_price: form.sale_price,
+        category: form.category,
+        image_url: form.image_url,
       })
       .eq('id', form.id);
-
-    if (error) {
-      alert(error.message);
-      return;
+    setLoading(false);
+    if (error) alert(error.message);
+    else {
+      alert('บันทึกข้อมูลสินค้าเรียบร้อย ✅');
+      onSaved();
+      onClose();
     }
-    onSaved();
-    onClose();
+  }
+
+  async function del() {
+    if (!confirm(`แน่ใจหรือไม่ที่จะลบ "${form.name}" ?`)) return;
+    const { error } = await supabase.from('products').delete().eq('id', form.id);
+    if (error) alert(error.message);
+    else {
+      alert('ลบสินค้าเรียบร้อย 🗑️');
+      onSaved();
+      onClose();
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg rounded-xl bg-zinc-900 border border-zinc-800 p-4 space-y-3">
-        <div className="text-lg font-semibold">แก้ไขสินค้า</div>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-zinc-900 text-zinc-100 rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 border border-zinc-800">
+        <h2 className="text-xl font-bold">🛠️ แก้ไขสินค้า</h2>
 
-        <input
-          className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2"
-          placeholder="ชื่อสินค้า"
-          value={form.name}
-          onChange={e => setForm({ ...form, name: e.target.value })}
-        />
+        {/* ชื่อสินค้า */}
+        <label className="block">
+          <span className="text-sm text-zinc-400">ชื่อสินค้า</span>
+          <input
+            className="w-full mt-1 p-2 bg-zinc-800 rounded-lg border border-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+          />
+        </label>
 
+        {/* SKU + หมวดหมู่ */}
         <div className="grid grid-cols-2 gap-2">
-          <input
-            className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2"
-            placeholder="บาร์โค้ด / SKU"
-            value={form.sku ?? ''}
-            onChange={e => setForm({ ...form, sku: e.target.value })}
-          />
-          <input
-            type="number"
-            className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2"
-            placeholder="คงเหลือ"
-            value={form.qty ?? 0}
-            onChange={e => setForm({ ...form, qty: Number(e.target.value) })}
-          />
+          <label>
+            <span className="text-sm text-zinc-400">รหัสสินค้า (SKU)</span>
+            <input
+              className="w-full mt-1 p-2 bg-zinc-800 rounded-lg border border-zinc-700"
+              value={form.sku}
+              onChange={(e) => setForm({ ...form, sku: e.target.value })}
+            />
+          </label>
+
+          <label>
+            <span className="text-sm text-zinc-400">หมวดหมู่</span>
+            <input
+              className="w-full mt-1 p-2 bg-zinc-800 rounded-lg border border-zinc-700"
+              value={form.category ?? ''}
+              onChange={(e) => setForm({ ...form, category: e.target.value })}
+            />
+          </label>
         </div>
 
+        {/* ราคาทุน + ราคาขาย */}
         <div className="grid grid-cols-2 gap-2">
-          <input
-            type="number"
-            className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2"
-            placeholder="ราคาทุน"
-            value={form.cost_price ?? 0}
-            onChange={e => setForm({ ...form, cost_price: Number(e.target.value) })}
-          />
-          <input
-            type="number"
-            className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2"
-            placeholder="ราคาขาย"
-            value={form.sale_price ?? 0}
-            onChange={e => setForm({ ...form, sale_price: Number(e.target.value) })}
-          />
+          <label>
+            <span className="text-sm text-zinc-400">ราคาทุน (บาท)</span>
+            <input
+              type="number"
+              className="w-full mt-1 p-2 bg-zinc-800 rounded-lg border border-zinc-700"
+              value={form.cost_price ?? 0}
+              onChange={(e) => setForm({ ...form, cost_price: Number(e.target.value) })}
+            />
+          </label>
+
+          <label>
+            <span className="text-sm text-zinc-400">ราคาขาย (บาท)</span>
+            <input
+              type="number"
+              className="w-full mt-1 p-2 bg-zinc-800 rounded-lg border border-zinc-700"
+              value={form.sale_price ?? 0}
+              onChange={(e) => setForm({ ...form, sale_price: Number(e.target.value) })}
+            />
+          </label>
         </div>
 
-        <input
-          className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2"
-          placeholder="หมวดหมู่"
-          value={form.category ?? ''}
-          onChange={e => setForm({ ...form, category: e.target.value })}
-        />
+        {/* URL รูปสินค้า */}
+        <label>
+          <span className="text-sm text-zinc-400">ลิงก์รูปสินค้า</span>
+          <input
+            className="w-full mt-1 p-2 bg-zinc-800 rounded-lg border border-zinc-700 text-xs"
+            value={form.image_url ?? ''}
+            onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+          />
+        </label>
 
-        <input
-          className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2"
-          placeholder="ภาพ (URL)"
-          value={form.image_url ?? ''}
-          onChange={e => setForm({ ...form, image_url: e.target.value })}
-        />
+        {/* ปุ่มควบคุม */}
+        <div className="flex justify-between items-center pt-4 border-t border-zinc-800">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-zinc-400 hover:text-white transition"
+          >
+            ยกเลิก
+          </button>
 
-        <div className="flex gap-2 justify-end pt-2">
-          <button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button>
-          <button className="btn btn-primary" onClick={save}>บันทึก</button>
+          <div className="flex gap-2">
+            <button
+              onClick={del}
+              className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg"
+            >
+              🗑️ ลบสินค้า
+            </button>
+            <button
+              disabled={loading}
+              onClick={save}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
+            >
+              💾 {loading ? 'กำลังบันทึก...' : 'บันทึก'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
