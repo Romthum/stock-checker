@@ -118,7 +118,7 @@ export default function Home() {
       )}
 
       <footer className="text-center text-xs text-zinc-400 mt-6">
-        © {new Date().getFullYear()} ArmFlex Stock Checker
+        © {new Date().getFullYear()} PeakWorldToy Stock Checker
       </footer>
     </div>
   );
