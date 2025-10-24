@@ -16,15 +16,15 @@ type Product = {
 type Props = {
   open: boolean;
   onClose: () => void;
-  product: Partial<Product>;   // รับจากการ์ดสินค้า (อาจไม่มีทุกฟิลด์)
-  onSaved: () => void;         // รีโหลดรายการหลังบันทึก
+  product: Partial<Product>;
+  onSaved: () => void;
 };
 
 export default function EditProductModal({ open, onClose, product, onSaved }: Props) {
   if (!open) return null;
 
   const [form, setForm] = useState<Product>({
-    id: product.id!,                          // id ต้องมี
+    id: product.id!,
     name: product.name ?? '',
     sku: product.sku ?? '',
     cost_price: product.cost_price ?? 0,
@@ -35,12 +35,21 @@ export default function EditProductModal({ open, onClose, product, onSaved }: Pr
   });
   const [busy, setBusy] = useState(false);
 
+  // ✅ เก็บ qty เป็น string ระหว่างพิมพ์ เพื่อไม่ให้เด้งเป็น 0 ตลอด
+  const [qtyStr, setQtyStr] = useState<string>(String(product.qty ?? 0));
+
+  // helper แปลงเป็นตัวเลขปลอดภัย (ว่าง -> 0)
+  const qtyNum = (() => {
+    const n = parseInt(qtyStr, 10);
+    return Number.isFinite(n) ? n : 0;
+  })();
+
   async function save() {
     setBusy(true);
     try {
-      // 1) ถ้า qty เปลี่ยน ให้บันทึกความต่างเป็น movement (ADJUST)
+      // ใช้ค่าที่พิมพ์จริง
       const oldQty = Number(product.qty ?? 0);
-      const newQty = Number(form.qty ?? 0);
+      const newQty = qtyNum;
       const delta = newQty - oldQty;
 
       if (delta !== 0) {
@@ -48,7 +57,6 @@ export default function EditProductModal({ open, onClose, product, onSaved }: Pr
         const uid = s?.session?.user?.id;
         if (!uid) throw new Error('ยังไม่ได้เข้าสู่ระบบ');
 
-        // ใส่ movement เพื่อเก็บประวัติ + ให้ trigger อัปเดต qty
         const { error: mvErr } = await supabase.from('stock_movements').insert({
           product_id: form.id,
           change: delta,
@@ -59,15 +67,19 @@ export default function EditProductModal({ open, onClose, product, onSaved }: Pr
         if (mvErr) throw mvErr;
       }
 
-      // 2) อัปเดตฟิลด์สินค้าอื่น ๆ (ยกเว้น qty เพราะ trigger จัดการแล้ว)
-      const { error: upErr } = await supabase.from('products').update({
-        name: form.name,
-        sku: form.sku || null,
-        cost_price: Number(form.cost_price ?? 0),
-        sale_price: Number(form.sale_price ?? 0),
-        category: form.category || null,
-        image_url: form.image_url || null,
-      }).eq('id', form.id);
+      const { error: upErr } = await supabase
+        .from('products')
+        .update({
+          name: form.name,
+          sku: form.sku || null,
+          cost_price: Number(form.cost_price ?? 0),
+          sale_price: Number(form.sale_price ?? 0),
+          category: form.category || null,
+          image_url: form.image_url || null,
+          // ไม่จำเป็นต้องอัปเดต qty ตรง ๆ เพราะ trigger จาก movements จัดการแล้ว
+        })
+        .eq('id', form.id);
+
       if (upErr) throw upErr;
 
       onSaved();
@@ -96,9 +108,11 @@ export default function EditProductModal({ open, onClose, product, onSaved }: Pr
     }
   }
 
-  // ปุ่มลัดปรับจำนวนใน modal (+1/-1)
-  const bump = (v: number) =>
-    setForm((f) => ({ ...f, qty: Number(f.qty ?? 0) + v }));
+  // ปุ่มลัดปรับจำนวน (+1/-1) — ใช้ qtyStr แล้วค่อยแปลง
+  const bump = (v: number) => {
+    const n = parseInt(qtyStr || '0', 10) || 0;
+    setQtyStr(String(n + v));
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -161,7 +175,7 @@ export default function EditProductModal({ open, onClose, product, onSaved }: Pr
           </label>
         </div>
 
-        {/* จำนวนคงเหลือ + ปุ่ม +1/-1 */}
+        {/* จำนวนคงเหลือ + ปุ่ม +1/-1 + พิมพ์เองได้เต็มที่ */}
         <label className="block">
           <div className="flex items-center justify-between mb-1">
             <span className="text-sm text-zinc-400">จำนวนคงเหลือ (ชิ้น)</span>
@@ -178,10 +192,16 @@ export default function EditProductModal({ open, onClose, product, onSaved }: Pr
               −1
             </button>
             <input
-              type="number"
+              inputMode="numeric"            // 👍 มือถือแสดงแป้นตัวเลข
+              pattern="[0-9]*"
               className="flex-1 p-2 bg-zinc-800 rounded-lg border border-zinc-700 text-right"
-              value={form.qty ?? 0}
-              onChange={(e) => setForm({ ...form, qty: Number(e.target.value) })}
+              value={qtyStr}
+              onChange={(e) => {
+                // อนุญาตค่าว่างให้พิมพ์ต่อได้, กรองอักขระที่ไม่ใช่ตัวเลข
+                const raw = e.target.value.replace(/[^\d]/g, '');
+                setQtyStr(raw);
+              }}
+              placeholder="0"
             />
             <button
               className="px-3 rounded-lg bg-zinc-800 border border-zinc-700"
