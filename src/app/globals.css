@@ -54,3 +54,34 @@ body{
 .table{ @apply w-full text-sm; }
 .th{ @apply text-left p-2 text-zinc-500; }
 .td{ @apply p-2; }
+@layer components {
+  /* การ์ดพื้นฐาน */
+  .card {
+    @apply rounded-2xl border shadow-sm bg-white border-zinc-200
+           dark:bg-zinc-900 dark:border-zinc-800;
+  }
+  .card-hover {
+    @apply transition-colors hover:bg-zinc-100/60 dark:hover:bg-white/5;
+  }
+  .card-muted {
+    @apply bg-zinc-50 border-zinc-200 dark:bg-zinc-900 dark:border-zinc-800;
+  }
+
+  /* ปุ่ม */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 h-10 rounded-lg font-medium transition disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn bg-blue-600 text-white hover:bg-blue-500;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent border border-zinc-300 text-zinc-700 hover:bg-zinc-100
+           dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-500;
+  }
+
+  /* ตัวอักษรอ่อน */
+  .muted { @apply text-zinc-500 dark:text-zinc-400; }
+}

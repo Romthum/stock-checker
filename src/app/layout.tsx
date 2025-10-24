@@ -12,11 +12,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="th">
-      <body className={`${prompt.variable} ${inter.variable} bg-white text-zinc-900`}>
-        <div className="mx-auto max-w-screen-sm min-h-[100dvh] px-4">
-          {children}
-        </div>
+    <html lang="th" className="h-full" suppressHydrationWarning>
+      <body className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 antialiased">
+        <main className="max-w-screen-md mx-auto px-3 py-4">{children}</main>
       </body>
     </html>
   );
