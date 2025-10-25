@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Papa from 'papaparse';
+// ❌ ลบ import Papa จากด้านบน
+// import Papa from 'papaparse';
 import { supabase } from '@/lib/supabaseClient';
 import { useRole } from '@/lib/useRole';
 
@@ -15,18 +16,16 @@ type ProductInsert = {
   image_url?: string | null;
 };
 
-const REQUIRED = ['name']; // ฟิลด์ที่ต้องมีอย่างน้อย
+const REQUIRED = ['name'];
 
 export default function ImportExportPage() {
   const { canManage } = useRole();
 
-  // Upload & preview
   const [file, setFile] = useState<File | null>(null);
   const [rows, setRows] = useState<CSVRow[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [parseErr, setParseErr] = useState<string>('');
 
-  // Mapping header -> field
   const [mapName, setMapName] = useState<string>('name');
   const [mapSku, setMapSku] = useState<string>('sku');
   const [mapCategory, setMapCategory] = useState<string>('category');
@@ -34,22 +33,15 @@ export default function ImportExportPage() {
   const [mapSale, setMapSale] = useState<string>('sale_price');
   const [mapImage, setMapImage] = useState<string>('image_url');
 
-  // Import status
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<{done: number; total: number}>({done: 0, total: 0});
+  const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
-
-  // Export status
   const [exporting, setExporting] = useState(false);
-
-  useEffect(() => {
-    // default mapping ถ้าหัวตารางเป็นภาษาไทย/อื่น ๆ ให้ผู้ใช้แก้จาก dropdown
-  }, []);
 
   const preview = useMemo(() => rows.slice(0, 10), [rows]);
 
-  function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0] || null;
     setFile(f);
     setRows([]);
@@ -59,22 +51,24 @@ export default function ImportExportPage() {
     setOk('');
     if (!f) return;
 
+    // ✅ dynamic import เพื่อให้รันเฉพาะฝั่ง browser
+    const PapaMod = await import('papaparse');
+    const Papa = PapaMod.default ?? PapaMod;
+
     Papa.parse<CSVRow>(f, {
       header: true,
       skipEmptyLines: true,
-      transformHeader: (h) => (h || '').trim(),
-      complete: (res) => {
+      transformHeader: (h: string) => (h || '').trim(),
+      complete: (res: any) => {
         if (res.errors && res.errors.length) {
-          setParseErr(res.errors.map(x => x.message).join(' | '));
+          setParseErr(res.errors.map((x: any) => x.message).join(' | '));
         }
         const data = (res.data || []).filter(Boolean);
         setRows(data);
-        // รวบหัวตารางจากทุกแถว
         const cols = new Set<string>();
-        data.forEach(r => Object.keys(r || {}).forEach(k => cols.add((k || '').trim())));
+        (data as CSVRow[]).forEach((r) => Object.keys(r || {}).forEach((k) => cols.add((k || '').trim())));
         const arr = Array.from(cols);
         setHeaders(arr);
-        // เดายอด map อัตโนมัติถ้าเจอ
         if (arr.includes('Name') && !arr.includes('name')) setMapName('Name');
         if (arr.includes('SKU') && !arr.includes('sku')) setMapSku('SKU');
         if (arr.includes('Category') && !arr.includes('category')) setMapCategory('Category');
@@ -82,7 +76,7 @@ export default function ImportExportPage() {
         if (arr.includes('Price') && !arr.includes('sale_price')) setMapSale('Price');
         if (arr.includes('Image') && !arr.includes('image_url')) setMapImage('Image');
       },
-      error: (e) => setParseErr(e.message || 'อ่านไฟล์ไม่สำเร็จ'),
+      error: (e: any) => setParseErr(e.message || 'อ่านไฟล์ไม่สำเร็จ'),
     });
   }
 
@@ -90,7 +84,6 @@ export default function ImportExportPage() {
     if (!key) return '';
     return (r[key] ?? '').toString().trim();
   }
-
   function parseNum(s: string): number | null {
     if (s === '' || s == null) return null;
     const n = Number((s || '').replace(/[, ]/g, ''));
@@ -100,42 +93,44 @@ export default function ImportExportPage() {
   async function doImport() {
     setErr('');
     setOk('');
-    if (!canManage) { setErr('คุณไม่มีสิทธิ์นำเข้าข้อมูล'); return; }
-    if (!rows.length) { setErr('ยังไม่มีข้อมูล CSV'); return; }
-    // ตรวจว่ามี name อย่างน้อย
-    const nameKey = mapName || '';
-    if (!nameKey || !headers.includes(nameKey)) {
+    if (!canManage) {
+      setErr('คุณไม่มีสิทธิ์นำเข้าข้อมูล');
+      return;
+    }
+    if (!rows.length) {
+      setErr('ยังไม่มีข้อมูล CSV');
+      return;
+    }
+    if (!mapName || !headers.includes(mapName)) {
       setErr('กรุณาเลือกคอลัมน์ "name" ให้ถูกต้อง');
       return;
     }
 
-    // สร้าง payload
-    const payload: ProductInsert[] = rows.map((r) => ({
-      name: getVal(r, mapName),
-      sku: (getVal(r, mapSku) || null) || null,
-      category: (getVal(r, mapCategory) || null) || null,
-      cost_price: parseNum(getVal(r, mapCost)),
-      sale_price: parseNum(getVal(r, mapSale)),
-      image_url: (getVal(r, mapImage) || null) || null,
-    })).filter(p => (p.name || '').trim());
+    const payload: ProductInsert[] = rows
+      .map((r) => ({
+        name: getVal(r, mapName),
+        sku: (getVal(r, mapSku) || null) || null,
+        category: (getVal(r, mapCategory) || null) || null,
+        cost_price: parseNum(getVal(r, mapCost)),
+        sale_price: parseNum(getVal(r, mapSale)),
+        image_url: (getVal(r, mapImage) || null) || null,
+      }))
+      .filter((p) => (p.name || '').trim());
 
-    if (!payload.length) { setErr('ไม่มีแถวที่มีชื่อสินค้า'); return; }
+    if (!payload.length) {
+      setErr('ไม่มีแถวที่มีชื่อสินค้า');
+      return;
+    }
 
-    // อัปโหลดแบบแบ่งชุด เพื่อลดภาระ IO
     setBusy(true);
-    setProgress({done: 0, total: payload.length});
+    setProgress({ done: 0, total: payload.length });
     try {
       const chunkSize = 200;
       for (let i = 0; i < payload.length; i += chunkSize) {
         const chunk = payload.slice(i, i + chunkSize);
-        // ใช้ upsert โดย onConflict = 'sku' ถ้าโปรเจกต์คุณตั้ง unique index ที่ sku
-        // ถ้าไม่ได้ตั้ง unique(sku) ให้เปลี่ยนเป็น insert() แทน
-        const { error } = await supabase
-          .from('products')
-          .upsert(chunk, { onConflict: 'sku' })
-          .select('id'); // ขอ select เล็กน้อยเพื่อรอให้เสร็จ
+        const { error } = await supabase.from('products').upsert(chunk, { onConflict: 'sku' }).select('id');
         if (error) throw error;
-        setProgress({done: Math.min(i + chunk.length, payload.length), total: payload.length});
+        setProgress({ done: Math.min(i + chunk.length, payload.length), total: payload.length });
       }
       setOk(`นำเข้าสำเร็จ ${payload.length} แถว ✅`);
     } catch (e: any) {
@@ -158,15 +153,19 @@ export default function ImportExportPage() {
         .limit(50000);
       if (error) throw error;
 
+      // ✅ dynamic import ตอน export เช่นกัน
+      const PapaMod = await import('papaparse');
+      const Papa = PapaMod.default ?? PapaMod;
+
       const csv = Papa.unparse(data || [], {
-        columns: ['name','sku','category','cost_price','sale_price','image_url'],
+        columns: ['name', 'sku', 'category', 'cost_price', 'sale_price', 'image_url'],
       });
 
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `products_${new Date().toISOString().slice(0,10)}.csv`;
+      a.download = `products_${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -230,68 +229,107 @@ export default function ImportExportPage() {
             <div className="grid sm:grid-cols-3 gap-3">
               <div>
                 <div className="text-xs muted mb-1">ชื่อสินค้า (name) *</div>
-                <select value={mapName} onChange={(e)=>setMapName(e.target.value)}
-                        className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700">
-                  {headers.map(h=> <option key={h} value={h}>{h}</option>)}
+                <select
+                  value={mapName}
+                  onChange={(e) => setMapName(e.target.value)}
+                  className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
+                >
+                  {headers.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
                 <div className="text-xs muted mb-1">SKU</div>
-                <select value={mapSku} onChange={(e)=>setMapSku(e.target.value)}
-                        className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700">
+                <select
+                  value={mapSku}
+                  onChange={(e) => setMapSku(e.target.value)}
+                  className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
+                >
                   <option value="">(ไม่มี)</option>
-                  {headers.map(h=> <option key={h} value={h}>{h}</option>)}
+                  {headers.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
                 <div className="text-xs muted mb-1">หมวดหมู่</div>
-                <select value={mapCategory} onChange={(e)=>setMapCategory(e.target.value)}
-                        className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700">
+                <select
+                  value={mapCategory}
+                  onChange={(e) => setMapCategory(e.target.value)}
+                  className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
+                >
                   <option value="">(ไม่มี)</option>
-                  {headers.map(h=> <option key={h} value={h}>{h}</option>)}
+                  {headers.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
                 </select>
               </div>
 
               <div>
                 <div className="text-xs muted mb-1">ราคาทุน</div>
-                <select value={mapCost} onChange={(e)=>setMapCost(e.target.value)}
-                        className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700">
+                <select
+                  value={mapCost}
+                  onChange={(e) => setMapCost(e.target.value)}
+                  className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
+                >
                   <option value="">(ไม่มี)</option>
-                  {headers.map(h=> <option key={h} value={h}>{h}</option>)}
+                  {headers.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
                 <div className="text-xs muted mb-1">ราคาขาย</div>
-                <select value={mapSale} onChange={(e)=>setMapSale(e.target.value)}
-                        className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700">
+                <select
+                  value={mapSale}
+                  onChange={(e) => setMapSale(e.target.value)}
+                  className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
+                >
                   <option value="">(ไม่มี)</option>
-                  {headers.map(h=> <option key={h} value={h}>{h}</option>)}
+                  {headers.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
                 <div className="text-xs muted mb-1">ลิงก์รูป</div>
-                <select value={mapImage} onChange={(e)=>setMapImage(e.target.value)}
-                        className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700">
+                <select
+                  value={mapImage}
+                  onChange={(e) => setMapImage(e.target.value)}
+                  className="w-full rounded-lg border px-2 py-2 bg-white border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
+                >
                   <option value="">(ไม่มี)</option>
-                  {headers.map(h=> <option key={h} value={h}>{h}</option>)}
+                  {headers.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
           )}
 
-          {/* Preview */}
           {rows.length > 0 && (
             <div className="rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
               <table className="w-full text-sm">
                 <thead className="bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-                  <tr>
-                    {headers.map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}
-                  </tr>
+                  <tr>{headers.map((h) => <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800 bg-white dark:bg-zinc-950">
                   {preview.map((r, i) => (
                     <tr key={i} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/60">
-                      {headers.map(h => (
+                      {headers.map((h) => (
                         <td key={h} className="px-3 py-2">{r[h] ?? ''}</td>
                       ))}
                     </tr>
@@ -299,16 +337,17 @@ export default function ImportExportPage() {
                 </tbody>
               </table>
               {rows.length > 10 && (
-                <div className="px-3 py-2 text-xs muted">แสดงตัวอย่าง 10 แถวแรก จากทั้งหมด {rows.length} แถว</div>
+                <div className="px-3 py-2 text-xs muted">
+                  แสดงตัวอย่าง 10 แถวแรก จากทั้งหมด {rows.length} แถว
+                </div>
               )}
             </div>
           )}
 
-          {/* Actions */}
           <div className="flex items-center justify-between">
             <div className="text-xs muted">
-              * การนำเข้าใช้ <b>upsert</b> ตาม SKU (ถ้าตั้ง unique index ที่ <code>products.sku</code>)<br/>
-              ถ้าโปรเจกต์ของคุณไม่ได้ใช้ SKU เป็น unique — ให้เปลี่ยนเป็น <code>insert()</code> ในโค้ด
+              * การนำเข้าใช้ <b>upsert</b> ตาม SKU (ถ้าตั้ง unique index ที่ <code>products.sku</code>)<br />
+              ถ้าไม่ได้ใช้ SKU เป็น unique ให้เปลี่ยนเป็น <code>insert()</code>
             </div>
             <button
               onClick={doImport}
