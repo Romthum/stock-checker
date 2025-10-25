@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-// ❌ ลบ import Papa จากด้านบน
-// import Papa from 'papaparse';
+// ❌ ไม่ต้อง import Papa ด้านบน เราจะ dynamic import ตอนใช้งาน
 import { supabase } from '@/lib/supabaseClient';
 import { useRole } from '@/lib/useRole';
 
@@ -15,8 +14,6 @@ type ProductInsert = {
   sale_price?: number | null;
   image_url?: string | null;
 };
-
-const REQUIRED = ['name'];
 
 export default function ImportExportPage() {
   const { canManage } = useRole();
@@ -51,7 +48,7 @@ export default function ImportExportPage() {
     setOk('');
     if (!f) return;
 
-    // ✅ dynamic import เพื่อให้รันเฉพาะฝั่ง browser
+    // ✅ dynamic import
     const PapaMod = await import('papaparse');
     const Papa = PapaMod.default ?? PapaMod;
 
@@ -69,6 +66,8 @@ export default function ImportExportPage() {
         (data as CSVRow[]).forEach((r) => Object.keys(r || {}).forEach((k) => cols.add((k || '').trim())));
         const arr = Array.from(cols);
         setHeaders(arr);
+
+        // auto-map ที่พบบ่อย
         if (arr.includes('Name') && !arr.includes('name')) setMapName('Name');
         if (arr.includes('SKU') && !arr.includes('sku')) setMapSku('SKU');
         if (arr.includes('Category') && !arr.includes('category')) setMapCategory('Category');
@@ -125,6 +124,7 @@ export default function ImportExportPage() {
     setBusy(true);
     setProgress({ done: 0, total: payload.length });
     try {
+      // แนะนำให้มี unique index: create unique index if not exists ux_products_sku on products(sku) where sku is not null;
       const chunkSize = 200;
       for (let i = 0; i < payload.length; i += chunkSize) {
         const chunk = payload.slice(i, i + chunkSize);
@@ -140,24 +140,52 @@ export default function ImportExportPage() {
     }
   }
 
+  // ✅ Export: พยายามอ่านจาก products (มี cost_price), ถ้าไม่ได้ค่อย fallback products_public แล้วเติม cost_price ว่าง
   async function doExport() {
     setExporting(true);
     setErr('');
     setOk('');
     try {
-      const { data, error } = await supabase
-        .from('products_public')
+      // 1) ลองจากตารางหลักก่อน
+      let { data, error } = await supabase
+        .from('products')
         .select('name, sku, category, cost_price, sale_price, image_url')
         .order('category', { ascending: true, nullsFirst: true })
         .order('name', { ascending: true })
         .limit(50000);
-      if (error) throw error;
 
-      // ✅ dynamic import ตอน export เช่นกัน
+      // 2) ถ้าอ่านไม่ได้ (ติด RLS ฯลฯ) → fallback ไปยัง view products_public (ไม่มี cost_price)
+      if (error) {
+        const fallback = await supabase
+          .from('products_public')
+          .select('name, sku, category, sale_price, image_url')
+          .order('category', { ascending: true, nullsFirst: true })
+          .order('name', { ascending: true })
+          .limit(50000);
+        if (fallback.error) throw fallback.error;
+
+        data = (fallback.data ?? []).map((r: any) => ({
+          ...r,
+          cost_price: '', // เติมค่าว่างเพื่อให้คอลัมน์คงที่
+        }));
+      }
+
+      // dynamic import papaparse ตอน export
       const PapaMod = await import('papaparse');
       const Papa = PapaMod.default ?? PapaMod;
 
-      const csv = Papa.unparse(data || [], {
+      const rows = (data ?? []).map((r: any) => ({
+        name: r.name ?? '',
+        sku: r.sku ?? '',
+        category: r.category ?? '',
+        cost_price: r.cost_price ?? '',
+        sale_price: r.sale_price ?? '',
+        image_url: r.image_url ?? '',
+      }));
+
+      const csv = Papa.unparse(rows, {
+        header: true,
+        newline: '\r\n',
         columns: ['name', 'sku', 'category', 'cost_price', 'sale_price', 'image_url'],
       });
 
@@ -170,7 +198,8 @@ export default function ImportExportPage() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      setOk(`ส่งออก ${data?.length ?? 0} รายการเรียบร้อย ✅`);
+
+      setOk(`ส่งออก ${rows.length} รายการเรียบร้อย ✅`);
     } catch (e: any) {
       setErr(e.message || 'ส่งออกไม่สำเร็จ');
     } finally {
@@ -346,8 +375,8 @@ export default function ImportExportPage() {
 
           <div className="flex items-center justify-between">
             <div className="text-xs muted">
-              * การนำเข้าใช้ <b>upsert</b> ตาม SKU (ถ้าตั้ง unique index ที่ <code>products.sku</code>)<br />
-              ถ้าไม่ได้ใช้ SKU เป็น unique ให้เปลี่ยนเป็น <code>insert()</code>
+              * การนำเข้าใช้ <b>upsert</b> ตาม SKU (ควรสร้าง unique index ที่ <code>products.sku</code>)<br />
+              ถ้าไม่ใช้ SKU เป็นคีย์ ให้เปลี่ยนเป็น <code>insert()</code>
             </div>
             <button
               onClick={doImport}
