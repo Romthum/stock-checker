@@ -17,79 +17,168 @@ type Product = {
   category: string | null;
 };
 
+const PAGE_SIZE = 40;
+
 export default function ProductsPage() {
   const { canManage } = useRole();
   const [editItem, setEditItem] = useState<Product | null>(null);
 
+  // data & ui
   const [items, setItems] = useState<Product[]>([]);
   const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
   const [err, setErr] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // category filter
   const [activeCat, setActiveCat] = useState<string>('ทั้งหมด');
 
-  async function load() {
-    setErr('');
-    setLoading(true);
+  // pagination
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
 
-    let query = supabase
-      .from('products_public')
-      .select('*')
-      .order('category', { ascending: true, nullsFirst: true })
-      .order('name', { ascending: true });
+  // ป้องกันกดซ้ำตอนอัปเดตสต็อก
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-    if (q.trim()) query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%`);
-    const { data, error } = await query;
-    if (error) setErr(error.message);
-    setItems((data as Product[]) ?? []);
-    setLoading(false);
-  }
+  // --- debounce search (300ms)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
-  useEffect(() => { load(); }, []);
+  // --- โหลดข้อมูลเมื่อ page / filter / debounced search เปลี่ยน
+  useEffect(() => {
+    let aborted = false;
 
-  async function adjust(
-    id: string,
-    delta: number,
-    reason: 'RESTOCK' | 'SALE' | 'ADJUST'
-  ) {
-    const { data: s } = await supabase.auth.getSession();
-    const uid = s?.session?.user?.id;
-    if (!uid) { setErr('ยังไม่ได้ล็อกอิน'); return; }
-    const { error } = await supabase
-      .from('stock_movements')
-      .insert({ product_id: id, change: delta, reason, created_by: uid });
-    if (error) setErr(error.message); else load();
-  }
+    async function load() {
+      setErr('');
+      setLoading(true);
 
-  const onScan = async (code: string) => {
+      const start = (page - 1) * PAGE_SIZE;
+      const end = start + PAGE_SIZE - 1;
+
+      try {
+        // base query
+        let query = supabase
+          .from('products_public')
+          .select('id,name,sku,sale_price,qty,updated_at,image_url,category', { count: 'exact' });
+
+        // filter by category
+        if (activeCat !== 'ทั้งหมด') {
+          if (activeCat === 'อื่น ๆ') query = query.is('category', null);
+          else query = query.eq('category', activeCat);
+        }
+
+        // search
+        const s = debouncedQ;
+        if (s) {
+          // ถ้าเหมือนบาร์โค้ด → ลอง exact sku ก่อน (เร็วมาก)
+          const looksLikeBarcode = /^\d{6,}$/.test(s);
+          if (looksLikeBarcode) {
+            const exact = await query
+              .eq('sku', s)
+              .order('name', { ascending: true })
+              .range(0, PAGE_SIZE - 1);
+            if (exact.error) throw exact.error;
+
+            if ((exact.data?.length ?? 0) > 0) {
+              if (!aborted) {
+                setItems(() => (exact.data as Product[])); // ใช้ผล exact เลย
+                setHasMore(false);
+                setLoading(false);
+              }
+              return;
+            }
+          }
+          // fallback → ILIKE name/sku
+          query = query.or(`name.ilike.%${s}%,sku.ilike.%${s}%`);
+        }
+
+        // order: ใช้คอลัมน์ที่มีดัชนี
+        if (!s) {
+          query = query
+            .order('category', { ascending: true, nullsFirst: true })
+            .order('name', { ascending: true });
+        } else {
+          query = query.order('name', { ascending: true });
+        }
+
+        // paging
+        const res = await query.range(start, end);
+        if (res.error) throw res.error;
+
+        if (!aborted) {
+          setItems(prev =>
+            page === 1 ? ((res.data as Product[]) ?? []) : [...prev, ...((res.data as Product[]) ?? [])]
+          );
+          const total = res.count ?? 0;
+          setHasMore(end + 1 < total);
+          setLoading(false);
+        }
+      } catch (e: any) {
+        if (!aborted) {
+          setErr(e.message || 'โหลดข้อมูลไม่สำเร็จ');
+          setLoading(false);
+        }
+      }
+    }
+
+    load();
+    return () => { aborted = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedQ, activeCat]);
+
+  // reset page เมื่อเปลี่ยนการค้นหา/หมวด
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ, activeCat]);
+
+  // สแกนบาร์โค้ดแล้วเอาค่าไปใส่ช่องค้นหา + รีเซ็ตเป็นหน้า 1
+  const handleScan = (code: string) => {
     setShowScanner(false);
     setQ(code);
-    await load();
+    setPage(1); // useEffect จะโหลดผลให้เอง
   };
 
+  // +1 / −1 แบบไม่รีโหลดทั้งหน้า
+  async function adjust(id: string, delta: number, reason: 'RESTOCK' | 'SALE' | 'ADJUST') {
+    setUpdatingId(id);
+    try {
+      const { data: s } = await supabase.auth.getSession();
+      const uid = s?.session?.user?.id;
+      if (!uid) { setErr('ยังไม่ได้ล็อกอิน'); return; }
+
+      const { error } = await supabase
+        .from('stock_movements')
+        .insert({ product_id: id, change: delta, reason, created_by: uid });
+      if (error) throw error;
+
+      setItems(prev => prev.map(p => (p.id === id ? { ...p, qty: p.qty + delta } : p)));
+    } catch (e: any) {
+      setErr(e.message || 'ปรับจำนวนไม่สำเร็จ');
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  // รายชื่อหมวดจากผลรายการที่โหลดแล้ว (เฉพาะชุดที่กำลังแสดง)
   const categories = useMemo(() => {
     const set = new Set<string>();
     for (const p of items) set.add(p.category || 'อื่น ๆ');
     return ['ทั้งหมด', ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [items]);
 
-  const filtered = useMemo(() => {
-    if (activeCat === 'ทั้งหมด') return items;
-    const c = activeCat === 'อื่น ๆ' ? null : activeCat;
-    return items.filter((p) => (p.category || 'อื่น ๆ') === (c ?? 'อื่น ๆ'));
-  }, [items, activeCat]);
-
+  // group ตามหมวดเพื่อแสดงหัวข้อ
   const grouped = useMemo(() => {
     const map = new Map<string, Product[]>();
-    const list = activeCat === 'ทั้งหมด' ? items : filtered;
-    for (const p of list) {
+    for (const p of items) {
       const key = p.category || 'อื่น ๆ';
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [items, filtered, activeCat]);
+  }, [items]);
 
   return (
     <div className="space-y-4 min-h-screen bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
@@ -116,7 +205,8 @@ export default function ProductsPage() {
           />
           <button
             className="rounded-lg px-4 text-sm bg-zinc-200 text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-            onClick={load}
+            onClick={() => setPage(1)}
+            title="ปกติระบบจะค้นหาอัตโนมัติผ่านดีบาวซ์ 300ms"
           >
             ค้นหา
           </button>
@@ -154,7 +244,7 @@ export default function ProductsPage() {
       {loading ? (
         <div className="text-center text-zinc-500 dark:text-zinc-400 py-10">กำลังโหลดสินค้า…</div>
       ) : (
-        <div className="space-y-6 px-3 pb-8">
+        <div className="space-y-6 px-3 pb-4">
           {grouped.map(([cat, list]) => (
             <section key={cat}>
               {/* หัวหมวด */}
@@ -202,13 +292,15 @@ export default function ProductsPage() {
 
                       <div className="mt-3 grid grid-cols-2 gap-2">
                         <button
-                          className="h-10 rounded-lg bg-zinc-200 text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 active:scale-95 transition"
+                          disabled={updatingId === p.id}
+                          className="h-10 rounded-lg bg-zinc-200 text-zinc-900 hover:bg-zinc-300 disabled:opacity-60 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 active:scale-95 transition"
                           onClick={() => adjust(p.id, +1, 'RESTOCK')}
                         >
                           +1 รับเข้า
                         </button>
                         <button
-                          className="h-10 rounded-lg bg-blue-600 text-white hover:bg-blue-500 active:scale-95 transition"
+                          disabled={updatingId === p.id}
+                          className="h-10 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-60 active:scale-95 transition"
                           onClick={() => adjust(p.id, -1, 'SALE')}
                         >
                           −1 ขาย
@@ -233,11 +325,24 @@ export default function ProductsPage() {
           ))}
 
           {!grouped.length && <div className="text-center text-zinc-500 dark:text-zinc-400 py-10">ไม่พบสินค้า</div>}
+
+          {/* ปุ่มโหลดเพิ่ม */}
+          {hasMore && (
+            <div className="pt-2">
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                disabled={loading}
+                className="w-full h-10 rounded-lg bg-zinc-200 text-zinc-900 hover:bg-zinc-300 disabled:opacity-60 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+              >
+                {loading ? 'กำลังโหลด…' : 'โหลดเพิ่มเติม'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {showScanner && (
-        <BarcodeScanner onDetected={onScan} onClose={() => setShowScanner(false)} />
+        <BarcodeScanner onDetected={handleScan} onClose={() => setShowScanner(false)} />
       )}
 
       {editItem && (
@@ -245,7 +350,7 @@ export default function ProductsPage() {
           open={!!editItem}
           product={editItem}
           onClose={() => setEditItem(null)}
-          onSaved={load}
+          onSaved={() => setPage(1)} // กลับไปหน้าแรกให้ข้อมูลใหม่อยู่บนสุด
         />
       )}
     </div>
