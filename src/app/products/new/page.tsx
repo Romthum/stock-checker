@@ -1,240 +1,296 @@
 'use client';
-import { supabase } from '@/lib/supabaseClient';
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import ImageUpload from '@/components/ImageUpload';
+import { supabase } from '@/lib/supabaseClient';
 import BarcodeScanner from '@/components/BarcodeScanner';
+import Image from 'next/image';
 
-export default function NewProduct() {
-  // ---- states (ประกาศให้ครบก่อน) ----
-  const [role, setRole] = useState<'STAFF' | 'MANAGER' | 'OWNER' | null>(null);
-  const [form, setForm] = useState({
+type ProductForm = {
+  name: string;
+  sku: string;
+  category: string;
+  cost_price: number | '';
+  sale_price: number | '';
+  qty: number | '';
+  image_url: string;
+};
+
+type ProductRow = { category: string | null };
+
+export default function NewProductPage() {
+  // ---------- state ----------
+  const [form, setForm] = useState<ProductForm>({
     name: '',
     sku: '',
+    category: '',
     cost_price: '',
     sale_price: '',
-    qty: '0',
-    category: '',
+    qty: '',
     image_url: '',
   });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
   const [showScanner, setShowScanner] = useState(false);
+
+  // ---------- โหลดหมวดหมู่เดิมเพื่อแนะนำ ----------
   const [cats, setCats] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const router = useRouter();
-
-  // ---- effects (ไม่ return ออกก่อนถึง hooks เหล่านี้) ----
   useEffect(() => {
     (async () => {
-      setLoading(true);
-      // role
-      const { data } = await supabase.auth.getUser();
-      const u = data.user;
-      if (u) {
-        const r = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', u.id)
-          .single();
-        setRole((r.data?.role as any) ?? 'STAFF');
-      } else {
-        setRole('STAFF');
-      }
-
-      // categories
-      const res = await supabase
-        .from('products')
+      const { data, error } = await supabase
+        .from('products_public')
         .select('category')
-        .order('category');
-      const list = (res.data ?? [])
-        .map((x: any) => x.category)
-        .filter((x: string | null) => !!x && x.trim().length > 0) as string[];
-      const uniq = Array.from(new Set(list)).sort((a, b) => a.localeCompare(b));
-      setCats(uniq);
-
-      setLoading(false);
+        .order('category', { ascending: true, nullsFirst: true });
+      if (!error) {
+        const s = new Set<string>();
+        (data as ProductRow[]).forEach(r => {
+          if (r.category && r.category.trim()) s.add(r.category.trim());
+        });
+        setCats(Array.from(s));
+      }
     })();
   }, []);
+  const topCats = useMemo(() => cats.slice(0, 8), [cats]);
 
-  // ---- memo (ต้องอยู่เสมอ ไม่ขึ้นกับการ return ก่อนหน้า) ----
-  const topCats = useMemo(() => cats.slice(0, 6), [cats]);
-
-  // ---- handlers ----
-  async function save() {
-    const { name, sku, cost_price, sale_price, qty, category, image_url } = form;
-    const { error } = await supabase.from('products').insert({
-      name,
-      sku,
-      cost_price: Number(cost_price || 0),
-      sale_price: Number(sale_price || 0),
-      qty: Number(qty || 0),
-      category: category || null,
-      image_url,
-    });
-    if (error) alert(error.message);
-    else router.push('/products');
-  }
-
-  function handleScanFill(code: string) {
-    setForm((f) => ({ ...f, sku: code }));
+  // ---------- handlers ----------
+  const onScan = (code: string) => {
     setShowScanner(false);
+    setForm(f => ({ ...f, sku: code }));
+  };
+
+  const onChange = (k: keyof ProductForm, v: string) => {
+    setForm(prev => ({ ...prev, [k]: v }));
+  };
+
+  async function save() {
+    setErr('');
+    setOk('');
+    // validate
+    if (!form.name.trim()) { setErr('กรุณากรอกชื่อสินค้า'); return; }
+
+    setBusy(true);
+    try {
+      const { data: s } = await supabase.auth.getSession();
+      const uid = s?.session?.user?.id;
+      if (!uid) throw new Error('ยังไม่ได้เข้าสู่ระบบ');
+
+      // แทรกสินค้าพร้อมยอดเริ่มต้น (ใช้ trigger อัปเดต qty เมื่อมี movement)
+      const { data: inserted, error } = await supabase
+        .from('products')
+        .insert({
+          name: form.name.trim(),
+          sku: form.sku.trim() || null,
+          category: form.category.trim() || null,
+          cost_price: form.cost_price === '' ? null : Number(form.cost_price),
+          sale_price: form.sale_price === '' ? null : Number(form.sale_price),
+          image_url: form.image_url.trim() || null,
+        })
+        .select('id')
+        .single();
+
+      if (error) throw error;
+
+      // ถ้ากรอก qty เริ่มต้น → ลง movement เป็น ADJUST
+      const initQty = form.qty === '' ? 0 : Number(form.qty);
+      if (inserted?.id && initQty !== 0) {
+        const { error: mvErr } = await supabase.from('stock_movements').insert({
+          product_id: inserted.id,
+          change: initQty,
+          reason: 'ADJUST',
+          created_by: uid,
+          note: 'ตั้งยอดเริ่มต้น',
+        });
+        if (mvErr) throw mvErr;
+      }
+
+      setOk('บันทึกสำเร็จ ✅');
+      setForm({
+        name: '',
+        sku: '',
+        category: '',
+        cost_price: '',
+        sale_price: '',
+        qty: '',
+        image_url: '',
+      });
+    } catch (e: any) {
+      setErr(e.message || 'บันทึกไม่สำเร็จ');
+    } finally {
+      setBusy(false);
+    }
   }
 
-  // ---- render ----
+  // ---------- UI ----------
   return (
-    <div className="space-y-4 bg-zinc-950 min-h-screen text-zinc-100">
+    <div className="min-h-screen bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       {/* Header */}
-      <div className="sticky top-0 z-30 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800 px-3 py-2 flex items-center justify-between">
+      <div className="sticky top-0 z-30 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 px-3 py-2 flex items-center justify-between">
         <button
-          onClick={() => (window.location.href = '/products')}
-          className="flex items-center gap-2 text-zinc-300 hover:text-white transition"
+          onClick={() => (window.location.href = '/')}
+          className="flex items-center gap-2 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
         >
-          <span className="text-lg">⬅️</span>
-          <span className="text-sm font-medium">รายการสินค้า</span>
+          <span className="text-lg">🏠</span>
+          <span className="text-sm font-medium">กลับหน้าหลัก</span>
         </button>
-        <span className="text-xs text-zinc-500">เพิ่มสินค้า</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">เพิ่มสินค้าใหม่</span>
       </div>
 
-      <div className="px-3 pb-6 space-y-4">
-        <h1 className="text-xl font-semibold mt-2">เพิ่มสินค้า</h1>
-
-        {/* สถานะโหลด/สิทธิ์ */}
-        {loading && <div className="text-zinc-400">กำลังโหลด…</div>}
-
-        {!loading && role === 'STAFF' && (
-          <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-4">
-            สำหรับผู้จัดการ/เจ้าของร้านเท่านั้น
-          </div>
-        )}
-
-        {!loading && role !== 'STAFF' && (
-          <>
-            <ImageUpload
-              value={form.image_url}
-              onChange={(url) => setForm((f) => ({ ...f, image_url: url }))}
-            />
-
-            <div className="grid gap-3">
-              <input
-                className="rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2"
-                placeholder="ชื่อสินค้า"
-                value={form.name}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, name: e.target.value }))
-                }
+      {/* Form card */}
+      <div className="max-w-3xl mx-auto px-3 py-4">
+        <div className="card p-4 space-y-4">
+          {/* แถวบน: ตัวอย่างรูป + ชื่อ */}
+          <div className="flex gap-3">
+            <div className="relative w-24 h-24 shrink-0 rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-800">
+              <Image
+                src={form.image_url || '/placeholder.png'}
+                alt="preview"
+                fill
+                className="object-cover"
+                sizes="96px"
               />
-
-              {/* SKU + ปุ่มสแกน */}
-              <div>
-                <div className="text-sm mb-1 text-zinc-300">บาร์โค้ด / SKU</div>
-                <div className="flex gap-2">
-                  <input
-                    className="rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 flex-1"
-                    placeholder="สแกนหรือพิมพ์รหัส"
-                    value={form.sku}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, sku: e.target.value }))
-                    }
-                  />
-                  <button
-                    type="button"
-                    className="rounded-lg bg-blue-600 px-4 hover:bg-blue-500"
-                    onClick={() => setShowScanner(true)}
-                  >
-                    📷 สแกน
-                  </button>
-                </div>
-              </div>
-
-              {/* หมวดหมู่: เลือกจากเดิมหรือพิมพ์ใหม่ */}
-              <div>
-                <div className="text-sm mb-1 text-zinc-300">หมวดหมู่</div>
-                <input
-                  list="category-suggest"
-                  className="rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 w-full"
-                  placeholder="เลือกหรือพิมพ์ใหม่ เช่น เครื่องดื่ม, ขนม, ของใช้"
-                  value={form.category}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, category: e.target.value }))
-                  }
-                />
-                <datalist id="category-suggest">
-                  {cats.map((c) => (
-                    <option key={c} value={c} />
-                  ))}
-                </datalist>
-
-                {topCats.length > 0 && (
-                  <div className="flex gap-2 flex-wrap mt-2">
-                    {topCats.map((c) => (
-                      <button
-                        key={c}
-                        className="px-3 py-1.5 rounded-full text-sm bg-zinc-900 border border-zinc-700 hover:bg-zinc-800"
-                        onClick={() =>
-                          setForm((f) => ({ ...f, category: c }))
-                        }
-                      >
-                        {c}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  className="rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2"
-                  placeholder="ราคาทุน"
-                  inputMode="decimal"
-                  value={form.cost_price}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, cost_price: e.target.value }))
-                  }
-                />
-                <input
-                  className="rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2"
-                  placeholder="ราคาขาย"
-                  inputMode="decimal"
-                  value={form.sale_price}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, sale_price: e.target.value }))
-                  }
-                />
-                <input
-                  className="rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2"
-                  placeholder="จำนวนเริ่มต้น"
-                  inputMode="numeric"
-                  value={form.qty}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, qty: e.target.value }))
-                  }
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  className="rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2"
-                  onClick={save}
-                >
-                  บันทึก
-                </button>
-                <button
-                  className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-4 py-2"
-                  onClick={() => router.push('/products')}
-                >
-                  ยกเลิก
-                </button>
-              </div>
             </div>
-          </>
-        )}
+            <label className="flex-1">
+              <div className="text-sm muted mb-1">ชื่อสินค้า</div>
+              <input
+                className="w-full rounded-lg border px-3 py-2 bg-white text-zinc-900 border-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700"
+                placeholder="เช่น โค้ก 325 ml แพ็ค"
+                value={form.name}
+                onChange={(e) => onChange('name', e.target.value)}
+              />
+            </label>
+          </div>
+
+          {/* SKU + สแกน + หมวด */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label>
+              <div className="text-sm muted mb-1">รหัสสินค้า (SKU/บาร์โค้ด)</div>
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 rounded-lg border px-3 py-2 bg-white text-zinc-900 border-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700"
+                  placeholder="สแกนหรือพิมพ์"
+                  value={form.sku}
+                  onChange={(e) => onChange('sku', e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowScanner(true)}
+                  className="rounded-lg px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white"
+                >
+                  📷 สแกน
+                </button>
+              </div>
+            </label>
+
+            <label>
+              <div className="text-sm muted mb-1">หมวดหมู่</div>
+              <input
+                list="cat-suggest"
+                className="w-full rounded-lg border px-3 py-2 bg-white text-zinc-900 border-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700"
+                placeholder="เช่น เครื่องดื่ม / ขนม"
+                value={form.category}
+                onChange={(e) => onChange('category', e.target.value)}
+              />
+              {/* suggestions */}
+              <datalist id="cat-suggest">
+                {topCats.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+              {cats.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {topCats.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className="px-2 py-1 text-xs rounded-full border bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-700"
+                      onClick={() => setForm(f => ({ ...f, category: c }))}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </label>
+          </div>
+
+          {/* ราคา/จำนวน */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label>
+              <div className="text-sm muted mb-1">ราคาทุน (บาท)</div>
+              <input
+                type="number"
+                inputMode="decimal"
+                className="w-full rounded-lg border px-3 py-2 bg-white text-zinc-900 border-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700"
+                value={form.cost_price}
+                onChange={(e) => onChange('cost_price', e.target.value)}
+                placeholder="0.00"
+              />
+            </label>
+            <label>
+              <div className="text-sm muted mb-1">ราคาขาย (บาท)</div>
+              <input
+                type="number"
+                inputMode="decimal"
+                className="w-full rounded-lg border px-3 py-2 bg-white text-zinc-900 border-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700"
+                value={form.sale_price}
+                onChange={(e) => onChange('sale_price', e.target.value)}
+                placeholder="0.00"
+              />
+            </label>
+            <label>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm muted">จำนวนเริ่มต้น (ชิ้น)</span>
+                <span className="text-xs text-zinc-400">(บันทึกเป็น ADJUST)</span>
+              </div>
+              <input
+                type="number"
+                inputMode="numeric"
+                className="w-full rounded-lg border px-3 py-2 bg-white text-zinc-900 border-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700"
+                value={form.qty}
+                onChange={(e) => onChange('qty', e.target.value)}
+                placeholder="0"
+              />
+            </label>
+          </div>
+
+          {/* รูปภาพ */}
+          <label>
+            <div className="text-sm muted mb-1">ลิงก์รูปสินค้า</div>
+            <input
+              className="w-full rounded-lg border px-3 py-2 bg-white text-zinc-900 border-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700 text-xs"
+              value={form.image_url}
+              onChange={(e) => onChange('image_url', e.target.value)}
+              placeholder="เช่น https://.../image.jpg"
+            />
+          </label>
+
+          {/* สถานะ */}
+          {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
+          {ok && <div className="text-sm text-emerald-600 dark:text-emerald-400">{ok}</div>}
+
+          {/* ปุ่ม */}
+          <div className="flex items-center justify-between pt-2">
+            <button
+              type="button"
+              onClick={() => (window.location.href = '/products')}
+              className="px-4 py-2 rounded-lg border bg-zinc-100 text-zinc-800 border-zinc-200 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-700"
+            >
+              ← กลับรายการสินค้า
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={busy}
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-60"
+            >
+              {busy ? 'กำลังบันทึก…' : 'บันทึกสินค้า'}
+            </button>
+          </div>
+        </div>
       </div>
 
+      {/* Modal สแกนบาร์โค้ด */}
       {showScanner && (
-        <BarcodeScanner
-          onDetected={handleScanFill}
-          onClose={() => setShowScanner(false)}
-        />
+        <BarcodeScanner onDetected={onScan} onClose={() => setShowScanner(false)} />
       )}
     </div>
   );
