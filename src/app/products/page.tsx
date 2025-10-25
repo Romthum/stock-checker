@@ -106,7 +106,7 @@ export default function ProductsPage() {
       </div>
 
       {/* แถบค้นหา + สแกน */}
-      <div className="sticky top-[44px] z-20 bg-zinc-50/80 dark:bg-zinc-900/90 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 p-3">
+      <div className="sticky top-11 z-20 bg-zinc-50/80 dark:bg-zinc-900/90 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 p-3">
         <div className="flex gap-2">
           <input
             className="flex-1 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
@@ -131,7 +131,7 @@ export default function ProductsPage() {
       </div>
 
       {/* หมวดหมู่เป็นแท็บ/ชิป */}
-      <div className="sticky top-[96px] z-10 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="sticky top-24 z-10 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
         <div className="flex gap-2 overflow-x-auto no-scrollbar">
           {categories.map((cat) => (
             <button

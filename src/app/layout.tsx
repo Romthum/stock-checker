@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="th" className="h-full" suppressHydrationWarning>
       <body className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 antialiased">
-        <main className="max-w-screen-md mx-auto px-3 py-4">{children}</main>
+        <main className="mx-auto w-full max-w-3xl px-3 py-4">{children}</main>
       </body>
     </html>
   );
