@@ -6,10 +6,23 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRole } from '@/lib/useRole';
 
+type Stats = {
+  products: number | null;
+  lowStock: number | null;
+  movementsToday: number | null;
+};
+
 export default function Home() {
   const [user, setUser] = useState<any>(null);
   const { role, canManage, loading } = useRole();
+  const [stats, setStats] = useState<Stats>({
+    products: null,
+    lowStock: null,
+    movementsToday: null,
+  });
+  const [statsErr, setStatsErr] = useState<string>('');
 
+  // ------- Auth state
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
@@ -17,6 +30,67 @@ export default function Home() {
     );
     return () => sub?.subscription.unsubscribe();
   }, []);
+
+  // ------- Load dashboard stats
+  useEffect(() => {
+    if (!user) return;
+    let aborted = false;
+
+    async function loadStats() {
+      setStatsErr('');
+
+      // 1) จำนวนสินค้าทั้งหมด (จาก view products_public)
+      const p = supabase
+        .from('products_public')
+        .select('id', { count: 'exact', head: true });
+
+      // 2) สต็อกต่ำ (qty <= 5) — ควรมี index ที่ products.qty
+      const low = supabase
+        .from('products_public')
+        .select('id', { count: 'exact', head: true })
+        .lte('qty', 5);
+
+      // 3) ความเคลื่อนไหววันนี้ (จาก movements view หรือ table จริง)
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const isoStart = start.toISOString();
+
+      const m = supabase
+        .from('movements_public') // ถ้าไม่มี view ให้เปลี่ยนเป็น 'stock_movements'
+        .select('product_id', { count: 'exact', head: true })
+        .gte('created_at', isoStart);
+
+      const [pRes, lowRes, mRes] = await Promise.allSettled([p, low, m]);
+
+      const products =
+        pRes.status === 'fulfilled' && !pRes.value.error ? pRes.value.count ?? 0 : null;
+      const lowStock =
+        lowRes.status === 'fulfilled' && !lowRes.value.error ? lowRes.value.count ?? 0 : null;
+      const movementsToday =
+        mRes.status === 'fulfilled' && !mRes.value.error ? mRes.value.count ?? 0 : null;
+
+      if (!aborted) {
+        setStats({ products, lowStock, movementsToday });
+        const anyErr =
+          (pRes.status === 'fulfilled' && pRes.value.error?.message) ||
+          (lowRes.status === 'fulfilled' && lowRes.value.error?.message) ||
+          (mRes.status === 'fulfilled' && mRes.value.error?.message) ||
+          (pRes.status === 'rejected' && pRes.reason?.message) ||
+          (lowRes.status === 'rejected' && lowRes.reason?.message) ||
+          (mRes.status === 'rejected' && mRes.reason?.message) ||
+          '';
+        setStatsErr(String(anyErr || ''));
+      }
+    }
+
+    loadStats();
+    // อัปเดตสถิติทุก 60 วินาที (เบา ๆ)
+    const t = setInterval(loadStats, 60_000);
+    return () => {
+      aborted = true;
+      clearInterval(t);
+    };
+  }, [user]);
 
   // 🔒 หน้า Login
   if (!user) {
@@ -38,9 +112,7 @@ export default function Home() {
                   },
                 },
               },
-              className: {
-                container: 'text-left',
-              },
+              className: { container: 'text-left' },
             }}
             providers={[]}
           />
@@ -66,6 +138,33 @@ export default function Home() {
           ) : null}
         </p>
       </div>
+
+      {/* แถวสรุปสถิติ */}
+      <div className="grid grid-cols-3 gap-3">
+        <Link href="/products" className="card card-hover p-3">
+          <div className="text-xs muted">สินค้าทั้งหมด</div>
+          <div className="text-2xl font-semibold mt-1">
+            {stats.products ?? '—'}
+          </div>
+        </Link>
+        <Link href="/products?filter=low" className="card card-hover p-3">
+          <div className="text-xs muted">สต็อกต่ำ (≤5)</div>
+          <div className="text-2xl font-semibold mt-1 text-amber-600 dark:text-amber-400">
+            {stats.lowStock ?? '—'}
+          </div>
+        </Link>
+        <Link href="/movements" className="card card-hover p-3">
+          <div className="text-xs muted">ความเคลื่อนไหววันนี้</div>
+          <div className="text-2xl font-semibold mt-1">
+            {stats.movementsToday ?? '—'}
+          </div>
+        </Link>
+      </div>
+      {statsErr ? (
+        <div className="text-xs text-amber-600 dark:text-amber-400">
+          หมายเหตุ: โหลดสถิติบางส่วนไม่สำเร็จ — {statsErr}
+        </div>
+      ) : null}
 
       {/* เมนูหลัก */}
       <div className="grid grid-cols-2 gap-4">
@@ -93,10 +192,7 @@ export default function Home() {
           </div>
         </Link>
 
-        <button
-          onClick={() => supabase.auth.signOut()}
-          className="card card-hover"
-        >
+        <button onClick={() => supabase.auth.signOut()} className="card card-hover">
           <div className="text-center py-6">
             <div className="text-3xl mb-2">🚪</div>
             <div className="font-medium text-red-600 dark:text-red-400">

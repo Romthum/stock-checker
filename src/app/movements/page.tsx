@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 type Movement = {
   id: string;
   change: number;
-  reason: 'RESTOCK'|'SALE'|'ADJUST';
+  reason: 'RESTOCK' | 'SALE' | 'ADJUST';
   created_at: string;
   product: { name: string; sku: string | null } | null;
 };
@@ -22,22 +22,25 @@ export default function MovementsPage() {
   const [from, setFrom] = useState<string>('');
   const [to, setTo] = useState<string>('');
 
-  // คำนวณช่วงเวลาตามปุ่มลัด
+  // คำนวณช่วงเวลาตามปุ่มลัด/กำหนดเอง
   const computedRange = useMemo(() => {
     const end = new Date();
     const start = new Date();
+
     if (rangeKey === 'today') {
-      start.setHours(0,0,0,0);
+      start.setHours(0, 0, 0, 0);
     } else if (rangeKey === '7d') {
       start.setDate(end.getDate() - 7);
-      start.setHours(0,0,0,0);
+      start.setHours(0, 0, 0, 0);
     } else if (rangeKey === '30d') {
       start.setDate(end.getDate() - 30);
-      start.setHours(0,0,0,0);
-    } else { // custom
+      start.setHours(0, 0, 0, 0);
+    } else {
+      // custom
       if (from) start.setTime(new Date(from + 'T00:00:00').getTime());
-      if (to)   end.setTime(new Date(to + 'T23:59:59').getTime());
+      if (to) end.setTime(new Date(to + 'T23:59:59').getTime());
     }
+
     return {
       startISO: start.toISOString(),
       endISO: end.toISOString(),
@@ -51,6 +54,7 @@ export default function MovementsPage() {
     setLoading(true);
     const { startISO, endISO } = computedRange;
 
+    // เลือกเฉพาะคอลัมน์ที่ใช้ ลด IO
     const { data, error } = await supabase
       .from('stock_movements')
       .select('id, change, reason, created_at, product:products(name, sku)')
@@ -72,125 +76,170 @@ export default function MovementsPage() {
   // ---------- สรุปสถิติ ----------
   const stats = useMemo(() => {
     const total = rows.length;
-    let restock = 0, sale = 0, adjust = 0, net = 0;
+    let restock = 0,
+      sale = 0,
+      adjust = 0,
+      net = 0;
     const hit: Record<string, number> = {};
     for (const r of rows) {
       net += r.change;
       if (r.reason === 'RESTOCK') restock += r.change;
       else if (r.reason === 'SALE') sale += Math.abs(r.change);
       else adjust += r.change;
+
       const key = r.product?.name ?? 'ไม่ทราบสินค้า';
       hit[key] = (hit[key] ?? 0) + Math.abs(r.change);
     }
     // สินค้าที่ถูกเคลื่อนไหวมากสุด
-    let topName = '-', topVal = 0;
+    let topName = '-',
+      topVal = 0;
     for (const [name, val] of Object.entries(hit)) {
-      if (val > topVal) { topVal = val; topName = name; }
+      if (val > topVal) {
+        topVal = val;
+        topName = name;
+      }
     }
     return { total, restock, sale, adjust, net, topName, topVal };
   }, [rows]);
 
   function fmtDate(ts: string) {
     const d = new Date(ts);
-    return d.toLocaleString();
+    // แสดงเวลาแบบไทย (24 ชม.)
+    return d.toLocaleString('th-TH', { hour12: false });
   }
 
   return (
-    <div className="bg-zinc-950 min-h-screen text-zinc-100">
+    <div className="min-h-screen bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       {/* Header + Back */}
-      <div className="sticky top-0 z-30 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800 px-3 py-2 flex items-center justify-between">
+      <div className="sticky top-0 z-30 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 px-3 py-2 flex items-center justify-between">
         <button
           onClick={() => (window.location.href = '/')}
-          className="flex items-center gap-2 text-zinc-300 hover:text-white transition"
+          className="flex items-center gap-2 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white transition"
         >
           <span className="text-lg">🏠</span>
           <span className="text-sm font-medium">กลับหน้าหลัก</span>
         </button>
-        <span className="text-xs text-zinc-500">ประวัติการขยับสต็อก</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">ประวัติการขยับสต็อก</span>
       </div>
 
       {/* Filters */}
       <div className="px-3 pt-3">
-        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
+        <div className="rounded-xl bg-zinc-50 border border-zinc-200 p-3 dark:bg-zinc-900 dark:border-zinc-800">
           <div className="flex flex-wrap items-center gap-2">
             <button
-              className={`px-3 py-1.5 rounded-lg text-sm border ${rangeKey==='today'?'bg-blue-600 text-white border-transparent':'bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700'}`}
+              className={`px-3 py-1.5 rounded-lg text-sm border ${
+                rangeKey === 'today'
+                  ? 'bg-blue-600 text-white border-transparent'
+                  : 'bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-700'
+              }`}
               onClick={() => setRangeKey('today')}
-            >วันนี้</button>
+            >
+              วันนี้
+            </button>
             <button
-              className={`px-3 py-1.5 rounded-lg text-sm border ${rangeKey==='7d'?'bg-blue-600 text-white border-transparent':'bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700'}`}
+              className={`px-3 py-1.5 rounded-lg text-sm border ${
+                rangeKey === '7d'
+                  ? 'bg-blue-600 text-white border-transparent'
+                  : 'bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-700'
+              }`}
               onClick={() => setRangeKey('7d')}
-            >7 วัน</button>
+            >
+              7 วัน
+            </button>
             <button
-              className={`px-3 py-1.5 rounded-lg text-sm border ${rangeKey==='30d'?'bg-blue-600 text-white border-transparent':'bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700'}`}
+              className={`px-3 py-1.5 rounded-lg text-sm border ${
+                rangeKey === '30d'
+                  ? 'bg-blue-600 text-white border-transparent'
+                  : 'bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-700'
+              }`}
               onClick={() => setRangeKey('30d')}
-            >30 วัน</button>
+            >
+              30 วัน
+            </button>
 
-            <div className="h-6 w-px bg-zinc-800 mx-1" />
+            <div className="h-6 w-px bg-zinc-200 dark:bg-zinc-800 mx-1" />
 
             <div className="flex items-center gap-2">
-              <label className="text-xs text-zinc-400">จาก</label>
+              <label className="text-xs text-zinc-500 dark:text-zinc-400">จาก</label>
               <input
                 type="date"
-                className="rounded-lg bg-zinc-800 border border-zinc-700 px-2 py-1 text-sm"
+                className="rounded-lg bg-white border border-zinc-300 px-2 py-1 text-sm dark:bg-zinc-800 dark:border-zinc-700"
                 value={from}
-                onChange={(e)=>{ setFrom(e.target.value); setRangeKey('custom'); }}
+                onChange={(e) => {
+                  setFrom(e.target.value);
+                  setRangeKey('custom');
+                }}
               />
-              <label className="text-xs text-zinc-400">ถึง</label>
+              <label className="text-xs text-zinc-500 dark:text-zinc-400">ถึง</label>
               <input
                 type="date"
-                className="rounded-lg bg-zinc-800 border border-zinc-700 px-2 py-1 text-sm"
+                className="rounded-lg bg-white border border-zinc-300 px-2 py-1 text-sm dark:bg-zinc-800 dark:border-zinc-700"
                 value={to}
-                onChange={(e)=>{ setTo(e.target.value); setRangeKey('custom'); }}
+                onChange={(e) => {
+                  setTo(e.target.value);
+                  setRangeKey('custom');
+                }}
               />
               <button
-                className="px-3 py-1.5 rounded-lg text-sm bg-zinc-700 hover:bg-zinc-600"
+                className="px-3 py-1.5 rounded-lg text-sm bg-zinc-200 text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
                 onClick={load}
-              >แสดงผล</button>
+              >
+                แสดงผล
+              </button>
             </div>
           </div>
-          <div className="text-xs text-zinc-400 mt-2">
-            ช่วงที่เลือก: {computedRange.start.toLocaleString()} – {computedRange.end.toLocaleString()}
+          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+            ช่วงที่เลือก: {computedRange.start.toLocaleString('th-TH', { hour12: false })} –{' '}
+            {computedRange.end.toLocaleString('th-TH', { hour12: false })}
           </div>
         </div>
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 gap-3 px-3 pt-3">
-        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
-          <div className="text-xs text-zinc-400">จำนวนรายการ</div>
+        <div className="rounded-xl bg-white border border-zinc-200 p-3 dark:bg-zinc-900 dark:border-zinc-800">
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">จำนวนรายการ</div>
           <div className="text-2xl font-semibold mt-1">{stats.total}</div>
         </div>
-        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
-          <div className="text-xs text-zinc-400">รับเข้า</div>
-          <div className="text-2xl font-semibold mt-1 text-emerald-400">+{stats.restock}</div>
+        <div className="rounded-xl bg-white border border-zinc-200 p-3 dark:bg-zinc-900 dark:border-zinc-800">
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">รับเข้า</div>
+          <div className="text-2xl font-semibold mt-1 text-emerald-600 dark:text-emerald-400">
+            +{stats.restock}
+          </div>
         </div>
-        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
-          <div className="text-xs text-zinc-400">ขายออก</div>
-          <div className="text-2xl font-semibold mt-1 text-rose-400">-{stats.sale}</div>
+        <div className="rounded-xl bg-white border border-zinc-200 p-3 dark:bg-zinc-900 dark:border-zinc-800">
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">ขายออก</div>
+          <div className="text-2xl font-semibold mt-1 text-rose-600 dark:text-rose-400">
+            -{stats.sale}
+          </div>
         </div>
-        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
-          <div className="text-xs text-zinc-400">ยอดสุทธิ</div>
-          <div className={`text-2xl font-semibold mt-1 ${stats.net>=0?'text-emerald-400':'text-rose-400'}`}>
-            {stats.net>=0?'+':''}{stats.net}
+        <div className="rounded-xl bg-white border border-zinc-200 p-3 dark:bg-zinc-900 dark:border-zinc-800">
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">ยอดสุทธิ</div>
+          <div
+            className={`text-2xl font-semibold mt-1 ${
+              stats.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+            }`}
+          >
+            {stats.net >= 0 ? '+' : ''}
+            {stats.net}
           </div>
         </div>
       </div>
 
       {/* Top moved */}
       <div className="px-3 pt-1">
-        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
-          <div className="text-xs text-zinc-400 mb-1">สินค้าที่เคลื่อนไหวมากสุด</div>
+        <div className="rounded-xl bg-white border border-zinc-200 p-3 dark:bg-zinc-900 dark:border-zinc-800">
+          <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">สินค้าที่เคลื่อนไหวมากสุด</div>
           <div className="text-sm">{stats.topName}</div>
-          <div className="text-xs text-zinc-500">รวม {stats.topVal} ชิ้น</div>
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">รวม {stats.topVal} ชิ้น</div>
         </div>
       </div>
 
       {/* Table */}
       <div className="px-3 py-4">
-        <div className="rounded-xl overflow-hidden border border-zinc-800">
+        <div className="rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
           <table className="w-full text-sm">
-            <thead className="bg-zinc-900 text-zinc-300">
+            <thead className="bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
               <tr>
                 <th className="text-left px-3 py-2">สินค้า</th>
                 <th className="text-left px-3 py-2">บาร์โค้ด</th>
@@ -199,32 +248,45 @@ export default function MovementsPage() {
                 <th className="text-left px-3 py-2">เวลา</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800 bg-zinc-950">
+            <tbody className="divide-y divide-zinc-200 bg-white dark:divide-zinc-800 dark:bg-zinc-950">
               {loading && (
-                <tr><td className="px-3 py-6 text-center text-zinc-400" colSpan={5}>กำลังโหลด…</td></tr>
-              )}
-              {!loading && rows.map((m) => (
-                <tr key={m.id} className="hover:bg-zinc-900/60">
-                  <td className="px-3 py-2">{m.product?.name ?? '-'}</td>
-                  <td className="px-3 py-2 text-zinc-400">{m.product?.sku ?? '-'}</td>
-                  <td className={`px-3 py-2 text-right font-semibold ${m.change>=0?'text-emerald-400':'text-rose-400'}`}>
-                    {m.change>0?`+${m.change}`:m.change}
+                <tr>
+                  <td className="px-3 py-6 text-center text-zinc-500 dark:text-zinc-400" colSpan={5}>
+                    กำลังโหลด…
                   </td>
-                  <td className="px-3 py-2">
-                    {m.reason === 'RESTOCK' ? 'รับเข้า' : m.reason === 'SALE' ? 'ขาย' : 'ปรับแก้'}
-                  </td>
-                  <td className="px-3 py-2 text-zinc-400">{fmtDate(m.created_at)}</td>
                 </tr>
-              ))}
+              )}
+              {!loading &&
+                rows.map((m) => (
+                  <tr key={m.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/60">
+                    <td className="px-3 py-2">{m.product?.name ?? '-'}</td>
+                    <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{m.product?.sku ?? '-'}</td>
+                    <td
+                      className={`px-3 py-2 text-right font-semibold ${
+                        m.change >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      {m.change > 0 ? `+${m.change}` : m.change}
+                    </td>
+                    <td className="px-3 py-2">
+                      {m.reason === 'RESTOCK' ? 'รับเข้า' : m.reason === 'SALE' ? 'ขาย' : 'ปรับแก้'}
+                    </td>
+                    <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{fmtDate(m.created_at)}</td>
+                  </tr>
+                ))}
               {!loading && rows.length === 0 && (
-                <tr><td className="px-3 py-10 text-center text-zinc-500" colSpan={5}>ยังไม่มีรายการในช่วงเวลานี้</td></tr>
+                <tr>
+                  <td className="px-3 py-10 text-center text-zinc-500 dark:text-zinc-400" colSpan={5}>
+                    ยังไม่มีรายการในช่วงเวลานี้
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {err && <div className="px-3 pb-4 text-sm text-red-400">{err}</div>}
+      {err && <div className="px-3 pb-4 text-sm text-red-600 dark:text-red-400">{err}</div>}
     </div>
   );
 }
